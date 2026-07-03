@@ -1,0 +1,5 @@
+- EventGuid : a1b2c3d4-3333-4aaa-9001-000000000003
+	- EventName : 看诊施药
+		-- EventContent : 一位面带病容的行人，闻得先生乃杏林圣手，恳请为在下看诊施药。
+		-- Option_Accept : 为他诊治
+		-- Option_Decline : 爱莫能助

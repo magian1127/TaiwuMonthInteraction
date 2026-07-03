@@ -1,0 +1,5 @@
+- EventGuid : a1b2c3d4-1111-4aaa-9001-000000000001
+	- EventName : 促织决斗
+		-- EventContent : 路遇一位手捧促织盆的行人，他兴致勃勃道：「在下这盆促织甚是凶猛，愿以<Item key=MI_SelectedItemKey str=ColorName/>与阁下斗上一局，如何？」
+		-- Option_Accept : 接受比试
+		-- Option_Decline : 婉拒

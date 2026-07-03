@@ -1,0 +1,11 @@
+- EventGuid : a1b2c3d4-2222-4aaa-9001-000000000002
+	- EventName : 代笔改名
+		-- EventContent : 路遇一位携幼子同行的行人，闻得先生乃才俊名士，恳请为犬子赐下一个佳名。
+		-- Option_Accept : 欣然应允
+		-- Option_Decline : 婉言推辞
+
+- EventGuid : a1b2c3d4-2224-4aaa-9001-000000000012
+	- EventName : 赐名
+		-- EventContent : 请输入新的名字
+		-- Option_Confirm : 确认
+		-- Option_Cancel : 作罢

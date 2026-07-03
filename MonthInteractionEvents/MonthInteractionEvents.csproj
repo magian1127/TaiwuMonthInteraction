@@ -1,0 +1,101 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>MonthInteractionEvents</RootNamespace>
+    <AssemblyName>MonthInteractionEvents</AssemblyName>
+    <Nullable>enable</Nullable>
+    <LangVersion>10</LangVersion>
+    <OutputPath>..\EventsOutput\</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <!-- ★ 标记为事件包项目：部署 target 据此把 DLL 复制到 Events\EventLib\ 而非 Plugins\ -->
+    <IsEventPackage>true</IsEventPackage>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <GameDir>D:\Games\Steam\steamapps\common\The Scroll Of Taiwu</GameDir>
+    <BackendDir>$(GameDir)\Backend</BackendDir>
+  </PropertyGroup>
+
+  <!-- 共享：游戏路径、Mod 名、构建后自动部署 -->
+  <Import Project="..\MonthInteraction.props" />
+
+  <ItemGroup>
+    <Reference Include="GameData">
+      <HintPath>$(BackendDir)\GameData.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="GameData.Shared">
+      <HintPath>$(BackendDir)\GameData.Shared.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="GameData.Common">
+      <HintPath>$(BackendDir)\GameData.Common.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="GameData.Utilities">
+      <HintPath>$(BackendDir)\GameData.Utilities.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="GameData.Serializer">
+      <HintPath>$(BackendDir)\GameData.Serializer.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="GameData.ArchiveData">
+      <HintPath>$(BackendDir)\GameData.ArchiveData.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="TaiwuModdingLib">
+      <HintPath>$(BackendDir)\TaiwuModdingLib.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- 事件语言文件片段：每个事件文件夹下各一个 Language_CN.txt，和事件 .cs 同目录。
+       构建时由 MergeLanguageFiles target 合并成单个 MonthInteractionEvents_Language_CN.txt
+       （游戏只认按 packageName 固定命名的单文件，不支持拆分加载）。
+       不设 Link → VS 解决方案资源管理器按磁盘实际路径显示，文本和 .cs 在同一文件夹下。 -->
+  <ItemGroup>
+    <None Include="Events\**\Language_*.txt" />
+  </ItemGroup>
+
+  <!-- 合并事件语言文件：按固定顺序拼接各事件文件夹的 Language_CN.txt，
+       生成 ..\Events\EventLanguages\MonthInteractionEvents_Language_CN.txt。
+       BeforeTargets=Build 保证编译/部署前生成。
+       游戏只认按 packageName 固定命名的单文件（LoadEventPackageFromAssembly 写死路径），不支持拆分加载。
+       用内联 C# Task 确保片段间空行分隔、顺序固定。 -->
+  <UsingTask TaskName="MergeLanguageFilesTask" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <LangFragments ParameterType="Microsoft.Build.Framework.ITaskItem[]" Required="true" />
+      <MergedLangFile ParameterType="System.String" Required="true" />
+    </ParameterGroup>
+    <Task>
+      <Using Namespace="System.IO" />
+      <Code Type="Fragment" Language="cs">
+        <![CDATA[
+        var merged = new System.Text.StringBuilder();
+        foreach (var frag in LangFragments)
+        {
+            if (merged.Length > 0) merged.AppendLine();
+            merged.Append(File.ReadAllText(frag.ItemSpec).TrimEnd('\r', '\n'));
+            merged.AppendLine();
+        }
+        File.WriteAllText(MergedLangFile, merged.ToString());
+        ]]>
+      </Code>
+    </Task>
+  </UsingTask>
+
+  <Target Name="MergeLanguageFiles" BeforeTargets="Build">
+    <PropertyGroup>
+      <MergedLangFile>..\Events\EventLanguages\MonthInteractionEvents_Language_CN.txt</MergedLangFile>
+    </PropertyGroup>
+    <MakeDir Directories="..\Events\EventLanguages" />
+    <ItemGroup>
+      <LangFragments Include="Events\CricketBattle\Language_CN.txt" />
+      <LangFragments Include="Events\Ghostwriting\Language_CN.txt" />
+      <LangFragments Include="Events\Medicine\Language_CN.txt" />
+    </ItemGroup>
+    <MergeLanguageFilesTask LangFragments="@(LangFragments)" MergedLangFile="$(MergedLangFile)" />
+    <Message Text="[$(MSBuildProjectName)] 已合并语言文件 → $(MergedLangFile)" Importance="high" />
+  </Target>
+</Project>
