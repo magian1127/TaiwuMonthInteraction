@@ -3,6 +3,9 @@ return {
 - 促织决斗：无前置条件, 人物会拿出指定物品。
 - 代笔改名：装备才俊技能, 人物会要求太吾帮他孩子改名, 触发不消耗时间、历练等。
 - 看诊施药：装备大夫技能, 触发不消耗时间、历练等。
+
+源码
+https://github.com/magian1127/TaiwuMonthInteraction
 ]],
 	Cover = "Cover.png",
     Author = "Magian",
