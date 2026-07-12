@@ -68,6 +68,14 @@ namespace MonthInteractionEvents
         private static string? _triggeredGuid;
         private static bool _idempotentUsed;
 
+        /// <summary>本次移动的概率掷骰结果（跨事件共享：一次移动只掷一次概率）。
+        /// 设计：概率是"本次移动是否发起互动"的前置门槛——没过则所有事件都不判断、直接结束；
+        /// 过了才逐个检查事件条件，第一个满足的触发。
+        /// 游戏依次调用三个事件实例（每个又调两次=入队+二次验证），所以概率结果必须跨事件共享，
+        /// 否则会被多次调用稀释成不可预测的概率。新地块自动重置（重新掷）。</summary>
+        private static Location _chanceCheckedLocation;
+        private static bool _chancePassed;
+
         // ───────── 轮转顺序 ─────────
 
         /// <summary>轮转队列：事件 Guid 字符串按月初打乱后的顺序。
@@ -99,7 +107,7 @@ namespace MonthInteractionEvents
             _turnOrder = guids;
             _turnPointer = 0;
             _turnShuffleMonth = DomainManager.World.GetCurrDate() / 30;
-            AdaptableLog.Info($"[MonthInteraction] 轮转队列本月已打乱：[{string.Join(", ", guids)}]，指针=0");
+            ModSettings.LogDebug($"轮转队列本月已打乱：[{string.Join(", ", guids)}]，指针=0");
         }
 
         /// <summary>所有参与轮转的 head 事件 Guid（由 MonthInteractionEventPackage 构造时填充）。
@@ -160,7 +168,7 @@ namespace MonthInteractionEvents
                     {
                         int targetId = -1;
                         ArgBox.Get(KeyTargetCharId, ref targetId);
-                        AdaptableLog.Info($"[MonthInteraction] 玩家接受：{EventTag}，目标 NPC {targetId}");
+                        ModSettings.LogDebug($"玩家接受：{EventTag}，目标 NPC {targetId}");
                         ExecuteInteraction(targetId, ArgBox);
                     }
                     catch (Exception ex)
@@ -213,11 +221,7 @@ namespace MonthInteractionEvents
             if (!string.IsNullOrEmpty(returnMark) && ArgBox.GetBool(returnMark))
                 return true;
 
-            // 1. 概率检查（成功率由后端设置推送，见 ModSettings.TriggerChancePercent）
-            if (Rng.Next(100) >= ModSettings.TriggerChancePercent)
-                return false;
-
-            // 2. 拿太吾对象和位置
+            // 1. 拿太吾对象和位置
             var taiwu = DomainManager.Taiwu.GetTaiwu();
             if (taiwu == null || taiwu.GetId() < 0)
                 return false;
@@ -230,7 +234,7 @@ namespace MonthInteractionEvents
             if (!location.IsValid())
                 return false;
 
-            // ★ 去重检查（区分"本事件"和"别的 event"）：
+            // 2. 去重检查（区分"本事件"和"别的 event"）：
             //   同一地块已记录触发者时——
             //     若是本事件 + 幂等券未用：放行二次验证，标记券已用（一券一次性）
             //     若是本事件 + 幂等券已用：不再放行（防止同事件反复入队）
@@ -250,55 +254,64 @@ namespace MonthInteractionEvents
                     return true;
                 }
                 // 本地块已被别的 event 占了
-                AdaptableLog.Info($"[MonthInteraction] {EventTag} 去重拦截（本地块已由 {_triggeredGuid} 触发）");
+                ModSettings.LogDebug($"{EventTag} 去重拦截（本地块已由 {_triggeredGuid} 触发）");
                 return false;
             }
 
-            // ★ 轮转队列：月初打乱一次，按指针顺位触发
+            // 3. ★ 概率门槛（一次移动只掷一次，结果跨事件共享）。
+            //   语义：本次移动是否发起互动——与具体哪个事件无关。
+            //   没过 → 本次移动所有事件都不判断，直接结束；
+            //   过了 → 进入步骤4，逐个检查事件条件，第一个满足的触发。
+            //   结果按地块缓存（_chancePassed），三个事件实例 + 二次验证都复用，新地块自动重掷。
+            if (!_chanceCheckedLocation.Equals(location))
+            {
+                _chanceCheckedLocation = location;
+                _chancePassed = Rng.Next(100) < ModSettings.TriggerChancePercent;
+                ModSettings.LogDebug($"概率掷骰（本次移动）：{(_chancePassed ? "过" : "未过")}（{ModSettings.TriggerChancePercent}%）");
+            }
+            if (!_chancePassed)
+                return false;
+
+            // 4. 概率已过，检查本事件自身条件：月上限 + NPC + CanTrigger。
+            //   不满足就 return false，让游戏调用的下一个事件实例继续判断（它复用同一个"已过"的概率）。
+            //   占位机制（步骤6）保证"一次移动只触发第一个满足条件的事件"。
             EnsureTurnOrderShuffled();
             if (_turnOrder == null || _turnOrder.Count == 0)
                 return false;
 
-            string myGuid = Guid.ToString();
-            string currentTurnGuid = _turnOrder[_turnPointer];
-            if (currentTurnGuid != myGuid)
+            if (InteractionCounter.IsEventMaxed(EventTag))
             {
-                // 不是当前指针指向的事件：让位，不占位，不影响别人
+                ModSettings.LogDebug($"{EventTag} 不满足（本月已达上限）");
                 return false;
             }
 
-            // 3. 选地块范围内的 NPC（虚方法，子类可覆写加筛选条件）
             int targetId = SelectTargetNpc(scriptRuntime, location);
             if (targetId < 0)
             {
-                // ★ 轮空让位：指针前进，下次移动由下一位优先
-                AdvanceTurnPointer();
-                AdaptableLog.Info($"[MonthInteraction] {EventTag} 轮空（NPC 筛选失败），指针前移");
+                ModSettings.LogDebug($"{EventTag} 不满足（NPC 筛选失败）");
                 return false;
             }
 
-            // 4. 本互动的前置条件
             if (!CanTrigger(taiwu.GetId()))
             {
-                AdvanceTurnPointer();
-                AdaptableLog.Info($"[MonthInteraction] {EventTag} 轮空（CanTrigger 失败），指针前移");
+                ModSettings.LogDebug($"{EventTag} 不满足（CanTrigger 失败）");
                 return false;
             }
 
-            // 5. 计数检查（弹框即计数，拒绝也消耗）
+            // 5. 计数消耗（弹框即计数，拒绝也消耗；含月上限 + 每 NPC 每事件 1 次 的最终消耗）
             if (!InteractionCounter.TryConsumeCount(targetId, EventTag))
             {
-                AdvanceTurnPointer();
-                AdaptableLog.Info($"[MonthInteraction] {EventTag} 轮空（计数超限），指针前移");
+                ModSettings.LogDebug($"{EventTag} 不满足（计数超限）");
                 return false;
             }
 
             // 6. 占位（本事件成为本次移动的触发者；同地块后续调用凭 Guid 幂等返回 true）
+            string myGuid = Guid.ToString();
             _triggeredLocation = location;
             _triggeredGuid = myGuid;
             _idempotentUsed = false;  // 新地块/新触发者，幂等券重置
 
-            // 7. 触发后指针前移：下次移动从下一位开始（"顺位下移"）
+            // 7. 触发后指针前移：下次移动从下一位开始优先（"顺位下移"）
             AdvanceTurnPointer();
 
             // 8. 塞 ArgBox
@@ -307,7 +320,7 @@ namespace MonthInteractionEvents
             // 9. 子类钩子：基于已选目标塞额外 ArgBox 数据（如查父母塞 dialogCharId）
             OnTargetSelected(targetId);
 
-            AdaptableLog.Info($"[MonthInteraction] 触发：{EventTag}，目标 NPC {targetId}，Guid={myGuid}");
+            ModSettings.LogDebug($"触发：{EventTag}，目标 NPC {targetId}，Guid={myGuid}");
             return true;
         }
 

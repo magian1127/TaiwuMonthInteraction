@@ -113,7 +113,7 @@ namespace MonthInteractionEvents
                 if (pool.Count == 0) return ItemKey.Invalid;
 
                 var picked = pool[Rng.Next(pool.Count)].key;
-                AdaptableLog.Info($"[MonthInteraction] CricketBattle 从 NPC {npcCharId} 库存选物品：{picked}（品阶池：{string.Join(",", topGrades.OrderBy(g => g))}，候选 {pool.Count} 件）");
+                ModSettings.LogDebug($"CricketBattle 从 NPC {npcCharId} 库存选物品：{picked}（品阶池：{string.Join(",", topGrades.OrderBy(g => g))}，候选 {pool.Count} 件）");
                 return picked;
             }
             catch (Exception ex)
@@ -130,7 +130,7 @@ namespace MonthInteractionEvents
             // ItemKey 是 ISerializableGameData，用 GenericSet 存储。
             // 语言文件文本用 <Item key=MI_SelectedItemKey str=ColorName/> 引用它（可高亮、鼠标悬停看详情）。
             ArgBox.GenericSet(KeySelectedItemKey, picked);
-            AdaptableLog.Info($"[MonthInteraction] CricketBattle 选定 NPC {targetId}，赌注物品：{picked}");
+            ModSettings.LogDebug($"CricketBattle 选定 NPC {targetId}，赌注物品：{picked}");
         }
 
         /// <summary>文案由语言文件提供（含物品高亮标签）。
@@ -149,7 +149,7 @@ namespace MonthInteractionEvents
             try
             {
                 DomainManager.Mod.AddModDisplayEvent(SelfModId, NotifyMaskOff);
-                AdaptableLog.Info($"[MonthInteraction] CricketBattle 已发通知 {NotifyMaskOff}");
+                ModSettings.LogDebug($"CricketBattle 已发通知 {NotifyMaskOff}");
             }
             catch (Exception ex)
             {
@@ -163,7 +163,7 @@ namespace MonthInteractionEvents
             if (pendingField != null && pickedKey.IsValid())
             {
                 pendingField.SetValue(null, pickedKey);
-                AdaptableLog.Info($"[MonthInteraction] CricketBattle 已设置后端注入物品 {pickedKey}");
+                ModSettings.LogDebug($"CricketBattle 已设置后端注入物品 {pickedKey}");
             }
 
             // 触发促织决斗（不带 specialWagerData，走原版 StartCricketCombat，由后端 Postfix 接管物品替换）
@@ -175,7 +175,7 @@ namespace MonthInteractionEvents
             try
             {
                 StartCricketCombatMethod.Invoke(null, new object?[] { targetId, "", argBox });
-                AdaptableLog.Info($"[MonthInteraction] CricketBattle 已触发促织决斗，NPC {targetId}");
+                ModSettings.LogDebug($"CricketBattle 已触发促织决斗，NPC {targetId}");
             }
             catch (Exception ex)
             {

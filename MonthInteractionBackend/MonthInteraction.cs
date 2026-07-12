@@ -32,6 +32,10 @@ namespace MonthInteractionBackend
         /// OnModSettingUpdate 时（_localMods 可用）读入缓存，运行时只读缓存。</summary>
         private static readonly Dictionary<string, int> _settingsCache = new();
 
+        /// <summary>调试模式开关（单独缓存，bool 类型不混入 int 字典）。默认 false。
+        /// 控制运行时明细日志输出，关键里程碑日志不受此开关控制。推送给事件包的 ModSettings.DebugMode。</summary>
+        private static bool _debugMode = false;
+
         public override void Initialize()
         {
             AdaptableLog.Info($"[{LogTag}] ★后端 Initialize 开始★ ModIdStr={ModIdStr}");
@@ -67,16 +71,19 @@ namespace MonthInteractionBackend
         }
 
         /// <summary>读档时重置触发计数：InteractionCounter 是 static 状态，不随存档重置，
-        /// 读档后会残留"本月已触发N次"导致再也触发不了。读档时清零恢复正常。</summary>
+        /// 读档后会残留"本月已触发N次"导致再也触发不了。读档时清零恢复正常。
+        /// 同时补推设置：后端 Initialize 早于事件包加载，初次推送会失败，读档时事件包已就绪。</summary>
         public override void OnLoadedArchiveData()
         {
             ResetInteractionCounter();
+            RefreshSettingsCache();
         }
 
-        /// <summary>进入新存档时也重置（保险）。</summary>
+        /// <summary>进入新存档时也重置（保险）。同 OnLoadedArchiveData，补推设置。</summary>
         public override void OnEnterNewWorld()
         {
             ResetInteractionCounter();
+            RefreshSettingsCache();
         }
 
         private static void ResetInteractionCounter()
@@ -119,8 +126,9 @@ namespace MonthInteractionBackend
             _settingsCache.Clear();
             CacheSetting("TriggerChancePercent", 10);
             CacheSetting("MaxPerEventPerMonth", 2);
+            CacheBoolSetting("DebugMode", false);
 
-            // 从缓存取值，反射调 ModSettings.Apply(triggerPercent, maxPerEvent) 推送给事件包
+            // 从缓存取值，反射调 ModSettings.Apply(triggerPercent, maxPerEvent, debugMode) 推送给事件包
             var modSettingsType = FindEventsType("MonthInteractionEvents.ModSettings");
             if (modSettingsType == null)
             {
@@ -136,7 +144,7 @@ namespace MonthInteractionBackend
             }
             int triggerPercent = GetSettingInt("TriggerChancePercent", 10);
             int maxPerEvent = GetSettingInt("MaxPerEventPerMonth", 2);
-            applyMethod.Invoke(null, new object[] { triggerPercent, maxPerEvent });
+            applyMethod.Invoke(null, new object[] { triggerPercent, maxPerEvent, _debugMode });
         }
 
         /// <summary>读取并缓存单个 int 设置项。从 DomainManager.Mod.GetSetting 读取，失败时用 defaultValue。</summary>
@@ -150,6 +158,20 @@ namespace MonthInteractionBackend
             catch
             {
                 _settingsCache[key] = defaultValue;
+            }
+        }
+
+        /// <summary>读取单个 bool 设置项到 _debugMode。DebugMode 单独存（不混入 int 字典）。</summary>
+        private void CacheBoolSetting(string key, bool defaultValue)
+        {
+            try
+            {
+                bool val = defaultValue;
+                _debugMode = DomainManager.Mod.GetSetting(ModIdStr, key, ref val) ? val : defaultValue;
+            }
+            catch
+            {
+                _debugMode = defaultValue;
             }
         }
 

@@ -21,15 +21,30 @@ namespace MonthInteractionEvents
         /// 实际存取在 <see cref="InteractionCounter.MaxPerEventPerMonth"/>，Apply 时同步过去。</summary>
         internal static int MaxPerEventPerMonth = 2;
 
+        /// <summary>调试模式：开启后输出运行时明细日志（轮转/概率/计数等）。默认 false。
+        /// 关键日志（初始化、设置更新、计数重置）不受此开关控制，始终输出。</summary>
+        internal static bool DebugMode = false;
+
         /// <summary>供后端插件反射调用：推送从 Config.lua 读入的设置值。
         /// triggerPercent → <see cref="TriggerChancePercent"/>；
-        /// maxPerEvent → <see cref="InteractionCounter.MaxPerEventPerMonth"/>。</summary>
-        internal static void Apply(int triggerPercent, int maxPerEvent)
+        /// maxPerEvent → <see cref="InteractionCounter.MaxPerEventPerMonth"/>；
+        /// debugMode → <see cref="DebugMode"/>。</summary>
+        internal static void Apply(int triggerPercent, int maxPerEvent, bool debugMode)
         {
             TriggerChancePercent = triggerPercent;
             InteractionCounter.MaxPerEventPerMonth = maxPerEvent;
+            DebugMode = debugMode;
+            // 设置更新属关键里程碑日志，始终输出（不受 DebugMode 控制）
             AdaptableLog.Info(
-                $"[MonthInteraction] 设置已更新：触发成功率={triggerPercent}%，单事件每月上限={maxPerEvent}");
+                $"[MonthInteraction] 设置已更新：触发成功率={triggerPercent}%，单事件每月上限={maxPerEvent}，调试模式={(debugMode ? "开" : "关")}");
+        }
+
+        /// <summary>调试日志：仅当 DebugMode 开启时输出。供事件包运行时明细使用
+        /// （轮转/概率检查/轮空/去重/计数消耗等高频日志）。</summary>
+        internal static void LogDebug(string msg)
+        {
+            if (DebugMode)
+                AdaptableLog.Info($"[MonthInteraction] {msg}");
         }
     }
 }

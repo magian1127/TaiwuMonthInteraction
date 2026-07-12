@@ -70,7 +70,7 @@ namespace MonthInteractionEvents
                         //   直接 StartShowSkillAnim，不弹 UI_ProfessionSkillConfirm 框。
                         //   配合后端 ProfessionSkillPatch 包裹 OnSkillExecuted，免扣时间/历练/资源。
                         ArgBox.Set("SkipConfirm", true);
-                        AdaptableLog.Info("[MonthInteraction] NameInput 确认：接入原版事件链（跳过确认框+免消耗）" + OriginalResultEventGuid);
+                        ModSettings.LogDebug("NameInput 确认：接入原版事件链（跳过确认框+免消耗）" + OriginalResultEventGuid);
                         EventHelper.ConfirmSkillExecute(OriginalResultEventGuid, ArgBox);
                         return "";
                     }
@@ -111,7 +111,7 @@ namespace MonthInteractionEvents
                 };
                 ArgBox.Set(KeyInputRequestData, req);
                 EventHelper.AddEventInListenWithActionName(Guid.ToString(), ArgBox, "InputActionComplete");
-                AdaptableLog.Info("[MonthInteraction] NameInput OnEventEnter：已装配输入面板");
+                ModSettings.LogDebug("NameInput OnEventEnter：已装配输入面板");
             }
             catch (Exception ex)
             {

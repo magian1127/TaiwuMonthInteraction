@@ -72,7 +72,7 @@ namespace MonthInteractionEvents
 
         protected override void ExecuteInteraction(int targetId, EventArgBox argBox)
         {
-            AdaptableLog.Info($"[MonthInteraction] Medicine 接受：目标 NPC {targetId}，接入原版选药事件 {SelectMedicineEventGuid}");
+            ModSettings.LogDebug($"Medicine 接受：目标 NPC {targetId}，接入原版选药事件 {SelectMedicineEventGuid}");
 
             // 触发原版选药事件（b6084cf3），原版自动接管选药 + ConfirmSkillExecute + 结果分发。
             // argBox 注入：

@@ -63,6 +63,14 @@ namespace MonthInteractionEvents
             }
         }
 
+        /// <summary>只读检查：某事件类型本月是否已达上限（不消耗次数）。
+        /// 供 CheckConditionInner 在概率检查之前预检，避免对已达上限的事件白掷概率。</summary>
+        internal static bool IsEventMaxed(string eventType)
+        {
+            CheckMonthRollover();
+            return _eventCounts.GetValueOrDefault(eventType, 0) >= MaxPerEventPerMonth;
+        }
+
         /// <summary>尝试消耗一次触发次数。满足条件返回 true 并计数；超限或重复返回 false。
         /// 弹框前调用——拒绝也消耗，避免被同一个 NPC 反复打扰。</summary>
         internal static bool TryConsumeCount(int npcId, string eventType)
@@ -73,7 +81,7 @@ namespace MonthInteractionEvents
             var key = (npcId, eventType);
             if (_npcEventFlags.TryGetValue(key, out bool triggered) && triggered)
             {
-                AdaptableLog.Info($"[MonthInteraction] 计数拦截：NPC {npcId} 事件 {eventType} 本月已触发过");
+                ModSettings.LogDebug($"计数拦截：NPC {npcId} 事件 {eventType} 本月已触发过");
                 return false;
             }
 
@@ -81,14 +89,14 @@ namespace MonthInteractionEvents
             int currentCount = _eventCounts.GetValueOrDefault(eventType, 0);
             if (currentCount >= MaxPerEventPerMonth)
             {
-                AdaptableLog.Info($"[MonthInteraction] 计数拦截：事件 {eventType} 本月已达 {MaxPerEventPerMonth} 次上限");
+                ModSettings.LogDebug($"计数拦截：事件 {eventType} 本月已达 {MaxPerEventPerMonth} 次上限");
                 return false;
             }
 
             // 消耗
             _npcEventFlags[key] = true;
             _eventCounts[eventType] = currentCount + 1;
-            AdaptableLog.Info($"[MonthInteraction] 计数消耗：NPC {npcId} 事件 {eventType}（本月第 {currentCount + 1} 次）");
+            ModSettings.LogDebug($"计数消耗：NPC {npcId} 事件 {eventType}（本月第 {currentCount + 1} 次）");
             return true;
         }
     }

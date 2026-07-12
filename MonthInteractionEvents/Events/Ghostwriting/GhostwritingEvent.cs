@@ -44,18 +44,21 @@ namespace MonthInteractionEvents
             return IsSkillEquipped("LiteratiSkill0");
         }
 
-        /// <summary>只选地块内的未成年 NPC（<16 岁），且至少有一个成年的血父或血母。</summary>
+        /// <summary>只选地块内的未成年 NPC（<16 岁），且至少有一个成年的血父或血母。
+        /// ★ 排除太吾的亲生孩子：太吾的骨肉不该走"路人恳请赐名"流程。</summary>
         protected override int SelectTargetNpc(EventScriptRuntime scriptRuntime, in Location location)
         {
             if (GetRandomCharMethod == null) return -1;
+            int taiwuCharId = DomainManager.Taiwu.GetTaiwuCharId();
             for (int attempt = 0; attempt < 8; attempt++)
             {
                 int candidateId = (int)GetRandomCharMethod.Invoke(
                     DomainManager.Character,
                     new object[] { scriptRuntime.Context, location, NpcSearchRange, false })!;
                 if (candidateId < 0) return -1;
-                if (!EventHelper.IsCharacterAdult(candidateId)
-                    && PickAdultBloodParent(candidateId) >= 0)
+                if (EventHelper.IsCharacterAdult(candidateId)) continue;
+                if (IsTaiwuBloodChild(candidateId, taiwuCharId)) continue;  // 太吾骨肉跳过
+                if (PickAdultBloodParent(candidateId) >= 0)
                     return candidateId;
             }
             return -1;
@@ -66,7 +69,22 @@ namespace MonthInteractionEvents
         {
             int dialogCharId = PickAdultBloodParent(targetId);
             ArgBox.Set(KeyDialogCharId, dialogCharId >= 0 ? dialogCharId : targetId);
-            AdaptableLog.Info($"[MonthInteraction] Ghostwriting 选定孩子 {targetId}，对话者(父母) {dialogCharId}");
+            ModSettings.LogDebug($"Ghostwriting 选定孩子 {targetId}，对话者(父母) {dialogCharId}");
+        }
+
+        /// <summary>判断孩子是否为太吾的亲骨肉（血父或血母是太吾）。</summary>
+        private static bool IsTaiwuBloodChild(int childCharId, int taiwuCharId)
+        {
+            try
+            {
+                var genealogy = DomainManager.Character.GetGenealogy(childCharId);
+                return genealogy.BloodFatherId == taiwuCharId || genealogy.BloodMotherId == taiwuCharId;
+            }
+            catch (Exception ex)
+            {
+                AdaptableLog.Info($"[MonthInteraction] IsTaiwuBloodChild({childCharId}) 异常: {ex.Message}");
+                return false;
+            }
         }
 
         protected override void ExecuteInteraction(int targetId, EventArgBox argBox)
@@ -75,7 +93,7 @@ namespace MonthInteractionEvents
             int dialogCharId = targetId;
             ArgBox.Get(KeyDialogCharId, ref dialogCharId);
 
-            AdaptableLog.Info($"[MonthInteraction] Ghostwriting 接受：孩子 {targetId}，对话者(父母) {dialogCharId}");
+            ModSettings.LogDebug($"Ghostwriting 接受：孩子 {targetId}，对话者(父母) {dialogCharId}");
 
             // ★ 触发 MOD 自建的输入名字事件，让玩家输入新名字给孩子改名。
             //   argBox 注入：孩子 charId（改名对象 + 输入页右侧显示）、父母 charId（取消回退用）、技能ID
