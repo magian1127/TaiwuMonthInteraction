@@ -17,8 +17,8 @@ namespace MonthInteractionEvents
         /// <summary>触发成功率（%）。默认 10。</summary>
         internal static int TriggerChancePercent = 10;
 
-        /// <summary>单事件每月最大触发次数。默认 2。
-        /// 实际存取在 <see cref="InteractionCounter.MaxPerEventPerMonth"/>，Apply 时同步过去。</summary>
+        /// <summary>单事件每月最大触发次数（= 事件池初始化轮数）。默认 2。
+        /// InteractionCounter 的事件池读这个值决定开几轮。</summary>
         internal static int MaxPerEventPerMonth = 2;
 
         /// <summary>调试模式：开启后输出运行时明细日志（轮转/概率/计数等）。默认 false。
@@ -27,12 +27,12 @@ namespace MonthInteractionEvents
 
         /// <summary>供后端插件反射调用：推送从 Config.lua 读入的设置值。
         /// triggerPercent → <see cref="TriggerChancePercent"/>；
-        /// maxPerEvent → <see cref="InteractionCounter.MaxPerEventPerMonth"/>；
+        /// maxPerEvent → <see cref="MaxPerEventPerMonth"/>（事件池轮数）；
         /// debugMode → <see cref="DebugMode"/>。</summary>
         internal static void Apply(int triggerPercent, int maxPerEvent, bool debugMode)
         {
             TriggerChancePercent = triggerPercent;
-            InteractionCounter.MaxPerEventPerMonth = maxPerEvent;
+            MaxPerEventPerMonth = maxPerEvent;
             DebugMode = debugMode;
             // 设置更新属关键里程碑日志，始终输出（不受 DebugMode 控制）
             AdaptableLog.Info(

@@ -40,7 +40,7 @@ namespace MonthInteractionEvents
             TargetRoleKey = KeyTargetCharId;
         }
 
-        protected override string EventTag => "Medicine";
+        protected internal override string EventTag => "Medicine";
 
         protected override bool CanTrigger(int taiwuCharId)
         {

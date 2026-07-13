@@ -114,6 +114,10 @@ namespace MonthInteractionEvents
         /// 不含非 head 事件（如 GhostwritingNameInputEvent）；不含非本基类的子类事件。</summary>
         internal static readonly List<string> AllEventGuids = new();
 
+        /// <summary>所有参与轮转的 head 事件 tag（EventTag，由 MonthInteractionEventPackage 构造时填充）。
+        /// 供 InteractionCounter 的事件池在轮重置时重新填充（池 = 打乱的全部 tag）。</summary>
+        internal static readonly List<string> AllEventTags = new();
+
         // ───────── 反射缓存（所有子类共享）─────────
 
         protected static readonly MethodInfo? GetRandomCharMethod =
@@ -123,7 +127,7 @@ namespace MonthInteractionEvents
         // ───────── 子类实现 ─────────
 
         /// <summary>本互动的日志标识（如 "CricketBattle"）。</summary>
-        protected abstract string EventTag { get; }
+        protected internal abstract string EventTag { get; }
 
         /// <summary>太吾是否满足本互动的前置条件（如促织≥3、装备了某技能）。</summary>
         protected abstract bool CanTrigger(int taiwuCharId);
@@ -258,10 +262,15 @@ namespace MonthInteractionEvents
                 return false;
             }
 
-            // 3. ★ 概率门槛（一次移动只掷一次，结果跨事件共享）。
+            // 3. ★ 本月无机会短路：事件池空且无剩余轮 → 本月不会再触发任何事件，连概率都不掷。
+            //   O(1) 检查，避免月上限用满后每次移动白掷概率 + 白跑条件检查。
+            if (!InteractionCounter.HasAnyChanceThisMonth())
+                return false;
+
+            // 4. ★ 概率门槛（一次移动只掷一次，结果跨事件共享）。
             //   语义：本次移动是否发起互动——与具体哪个事件无关。
             //   没过 → 本次移动所有事件都不判断，直接结束；
-            //   过了 → 进入步骤4，逐个检查事件条件，第一个满足的触发。
+            //   过了 → 进入步骤5，检查本事件条件。
             //   结果按地块缓存（_chancePassed），三个事件实例 + 二次验证都复用，新地块自动重掷。
             if (!_chanceCheckedLocation.Equals(location))
             {
@@ -272,16 +281,13 @@ namespace MonthInteractionEvents
             if (!_chancePassed)
                 return false;
 
-            // 4. 概率已过，检查本事件自身条件：月上限 + NPC + CanTrigger。
-            //   不满足就 return false，让游戏调用的下一个事件实例继续判断（它复用同一个"已过"的概率）。
-            //   占位机制（步骤6）保证"一次移动只触发第一个满足条件的事件"。
-            EnsureTurnOrderShuffled();
-            if (_turnOrder == null || _turnOrder.Count == 0)
-                return false;
-
-            if (InteractionCounter.IsEventMaxed(EventTag))
+            // 5. 概率已过，检查本事件自身条件。
+            //   轮换队列：本事件还在队列里（有剩余次数）→ 挪到队尾让位，让下一次排前面的优先。
+            //   不在队列（本月次数用完）→ return false，瞬间退出（不选 NPC、不做后续计算）。
+            //   占位机制（步骤7）保证"一次移动只触发第一个满足条件的事件"。
+            if (!InteractionCounter.TryRotateToBack(EventTag))
             {
-                ModSettings.LogDebug($"{EventTag} 不满足（本月已达上限）");
+                ModSettings.LogDebug($"{EventTag} 不满足（本月次数已用完）");
                 return false;
             }
 
@@ -298,21 +304,18 @@ namespace MonthInteractionEvents
                 return false;
             }
 
-            // 5. 计数消耗（弹框即计数，拒绝也消耗；含月上限 + 每 NPC 每事件 1 次 的最终消耗）
+            // 6. 计数消耗（扣减剩余次数 + 记 NPC；归零从队列移除）
             if (!InteractionCounter.TryConsumeCount(targetId, EventTag))
             {
                 ModSettings.LogDebug($"{EventTag} 不满足（计数超限）");
                 return false;
             }
 
-            // 6. 占位（本事件成为本次移动的触发者；同地块后续调用凭 Guid 幂等返回 true）
+            // 7. 占位（本事件成为本次移动的触发者；同地块后续调用凭 Guid 幂等返回 true）
             string myGuid = Guid.ToString();
             _triggeredLocation = location;
             _triggeredGuid = myGuid;
             _idempotentUsed = false;  // 新地块/新触发者，幂等券重置
-
-            // 7. 触发后指针前移：下次移动从下一位开始优先（"顺位下移"）
-            AdvanceTurnPointer();
 
             // 8. 塞 ArgBox
             ArgBox.Set(KeyTargetCharId, targetId);

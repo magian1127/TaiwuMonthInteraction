@@ -37,7 +37,7 @@ namespace MonthInteractionEvents
             TargetRoleKey = KeyDialogCharId;
         }
 
-        protected override string EventTag => "Ghostwriting";
+        protected internal override string EventTag => "Ghostwriting";
 
         protected override bool CanTrigger(int taiwuCharId)
         {

@@ -37,10 +37,14 @@ namespace MonthInteractionEvents
             // 基类的轮转队列在月初会按此列表打乱，决定每次移动哪个事件优先触发。
             // GhostwritingNameInputEvent 是子事件（IsHeadEvent=false），不参与轮转。
             MonthInteractionEventBase.AllEventGuids.Clear();
+            MonthInteractionEventBase.AllEventTags.Clear();
             foreach (var eventItem in EventList)
             {
                 if (eventItem is MonthInteractionEventBase headEvent && headEvent.IsHeadEvent)
+                {
                     MonthInteractionEventBase.AllEventGuids.Add(headEvent.Guid.ToString());
+                    MonthInteractionEventBase.AllEventTags.Add(headEvent.EventTag);
+                }
             }
         }
     }

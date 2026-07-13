@@ -1,49 +1,59 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using GameData.Domains;
 using GameData.Utilities;
 
 namespace MonthInteractionEvents
 {
     /// <summary>
-    /// 触发计数与限额（后端静态状态）。
+    /// 触发计数 + 轮换队列（后端静态状态）。
     ///
-    /// 规则（与 PRD 一致）：
-    ///   - 每 NPC 每事件每月最多触发 1 次（避免被同一 NPC 反复打扰）
-    ///   - 每事件类型整月最多触发 2 次（避免某类互动刷屏）
-    ///   - 弹框即计数（拒绝也消耗）
-    ///   - 月初清零
+    /// 设计（用户定义的"挪队尾"方案）：
+    ///   - _queue：有序事件 tag 队列。事件实例被调时，若自己还在队列里（有剩余次数），
+    ///     就把自己挪到队尾（让出优先权），然后正常走检查流程。
+    ///   - 这样每次移动，排最前的事件优先被检查，检查完自动让位 → 自然形成 A→B→C→A 轮换。
+    ///   - 触发一次 → 该事件剩余次数 -1；归零 → 从队列移除（不再参与）。
+    ///   - 某事件卡着不触发 → 剩余次数不变，挪到队尾后等下次轮到，不阻塞别的事件。
+    ///   - 队列空 → 本月全部达上限，CheckConditionInner 连概率都不掷（O(1) 短路）。
+    ///   - 每 NPC 每事件每月限 1 次。
+    ///   - 月初清零：重建队列 + 清 NPC 标记。
     ///
-    /// 月初清零方式：检测当前月份是否变化（从 DomainManager 读取），变了就清空。
-    /// 不依赖额外的事件注册，简单可靠。
+    /// 为什么不随机起始索引：挪队尾是确定性轮换，公平无饥饿，且天然适配独立调用架构
+    /// （每个事件实例自己挪，不需要总入口协调）。
     /// </summary>
     internal static class InteractionCounter
     {
-        /// <summary>重置所有计数 + 轮转队列（读档/进新世界时调用，避免 static 状态跨存档残留卡死触发）。
-        /// 轮转队列重置后，下次 CheckCondition 时 EnsureTurnOrderShuffled 会按当前月份重建并打乱。</summary>
-        internal static void Reset()
-        {
-            _npcEventFlags.Clear();
-            _eventCounts.Clear();
-            _lastCheckedMonth = -1;
-            // ★ 同步重置基类的轮转队列状态（防止跨档残留指针卡在某事件）
-            MonthInteractionEventBase.ResetTurnState();
-            AdaptableLog.Info("[MonthInteraction] 触发计数与轮转队列已重置");
-        }
+        /// <summary>每 NPC 每事件每月限触发 1 次。</summary>
         internal const int MaxPerNpcPerMonth = 1;
-        /// <summary>每事件类型整月触发上限（运行时可调，默认 2，由 ModSettings.Apply 推送）。</summary>
-        internal static int MaxPerEventPerMonth = 2;
+
+        /// <summary>事件 tag 有序队列（本月剩余次数 > 0 的事件）。
+        /// 排第一的优先被检查；被调时挪到队尾让位。</summary>
+        private static List<string>? _queue;
+
+        /// <summary>各事件本月剩余次数（归零则从 _queue 移除）。</summary>
+        private static Dictionary<string, int>? _remaining;
+
+        /// <summary>上次检查时的月份（检测跨月重置）。</summary>
+        private static int _lastCheckedMonth = -1;
 
         /// <summary>每 NPC 每事件本月是否已触发。key = (npcCharId, eventType)。</summary>
         private static readonly Dictionary<(int, string), bool> _npcEventFlags = new();
 
-        /// <summary>每事件类型本月已触发次数。</summary>
-        private static readonly Dictionary<string, int> _eventCounts = new();
+        /// <summary>队列初始化打乱用（月初随机起始顺序）。</summary>
+        private static readonly Random _queueRng = new();
 
-        /// <summary>上次检查时的月份（用于检测月份变化并清零）。</summary>
-        private static int _lastCheckedMonth = -1;
+        /// <summary>重置队列 + NPC 标记（读档/进新世界时调用，避免 static 跨档残留）。</summary>
+        internal static void Reset()
+        {
+            _queue = null;
+            _remaining = null;
+            _lastCheckedMonth = -1;
+            _npcEventFlags.Clear();
+            AdaptableLog.Info("[MonthInteraction] 轮换队列与 NPC 标记已重置");
+        }
 
-        /// <summary>检查月份变化，跨月时自动清零计数。每次判断计数前先调用。</summary>
+        /// <summary>检测月份变化，跨月时清空队列 + NPC 标记。</summary>
         private static void CheckMonthRollover()
         {
             try
@@ -51,9 +61,10 @@ namespace MonthInteractionEvents
                 int currMonth = DomainManager.World.GetCurrDate() / 30;
                 if (_lastCheckedMonth >= 0 && currMonth != _lastCheckedMonth)
                 {
+                    _queue = null;
+                    _remaining = null;
                     _npcEventFlags.Clear();
-                    _eventCounts.Clear();
-                    AdaptableLog.Info($"[MonthInteraction] 触发计数已清空（月份 {_lastCheckedMonth} → {currMonth}）");
+                    AdaptableLog.Info($"[MonthInteraction] 跨月清零（{_lastCheckedMonth} → {currMonth}）");
                 }
                 _lastCheckedMonth = currMonth;
             }
@@ -63,21 +74,62 @@ namespace MonthInteractionEvents
             }
         }
 
-        /// <summary>只读检查：某事件类型本月是否已达上限（不消耗次数）。
-        /// 供 CheckConditionInner 在概率检查之前预检，避免对已达上限的事件白掷概率。</summary>
-        internal static bool IsEventMaxed(string eventType)
+        /// <summary>确保队列已为本月初始化：Fisher-Yates 打乱顺序，每个事件剩余次数 = 月上限。</summary>
+        private static void EnsureQueueInitialized()
         {
-            CheckMonthRollover();
-            return _eventCounts.GetValueOrDefault(eventType, 0) >= MaxPerEventPerMonth;
+            if (_queue != null) return;
+            int max = ModSettings.MaxPerEventPerMonth;
+            _queue = new List<string>(MonthInteractionEventBase.AllEventTags);
+            _remaining = new Dictionary<string, int>();
+            foreach (var tag in _queue)
+                _remaining[tag] = max;
+            // 月初打乱起始顺序
+            for (int i = _queue.Count - 1; i > 0; i--)
+            {
+                int j = _queueRng.Next(i + 1);
+                (_queue[i], _queue[j]) = (_queue[j], _queue[i]);
+            }
+            ModSettings.LogDebug($"轮换队列本月初始化（打乱）：[{string.Join(", ", _queue)}]");
         }
 
-        /// <summary>尝试消耗一次触发次数。满足条件返回 true 并计数；超限或重复返回 false。
-        /// 弹框前调用——拒绝也消耗，避免被同一个 NPC 反复打扰。</summary>
+        /// <summary>本月是否还有任何事件能触发（队列非空）。供 CheckConditionInner 概率门槛前 O(1) 短路。</summary>
+        internal static bool HasAnyChanceThisMonth()
+        {
+            CheckMonthRollover();
+            EnsureQueueInitialized();
+            return _queue != null && _queue.Count > 0;
+        }
+
+        /// <summary>事件实例被调时：若自己在队列里，挪到队尾让位（让下一次排前面的事件优先）。
+        /// 然后返回 true（仍可参与本轮检查）。不在队列（次数用完）→ 返回 false。
+        /// 供 CheckConditionInner 在概率通过后调用。</summary>
+        internal static bool TryRotateToBack(string eventType)
+        {
+            CheckMonthRollover();
+            EnsureQueueInitialized();
+            if (_queue == null || !_queue.Contains(eventType))
+                return false;  // 不在队列（本月次数用完）
+            // 挪到队尾（除非已经是最后一个）
+            if (_queue[_queue.Count - 1] != eventType)
+            {
+                _queue.Remove(eventType);
+                _queue.Add(eventType);
+            }
+            return true;
+        }
+
+        /// <summary>尝试消耗一次触发：剩余次数 > 0 + NPC 本月未触发过 → 扣减 + 记 NPC + 返回 true。
+        /// 剩余归零自动从队列移除。弹框前调用——拒绝也消耗，避免被同一 NPC 反复打扰。</summary>
         internal static bool TryConsumeCount(int npcId, string eventType)
         {
             CheckMonthRollover();
+            EnsureQueueInitialized();
+            if (_remaining == null || !_remaining.TryGetValue(eventType, out int left) || left <= 0)
+            {
+                ModSettings.LogDebug($"计数拦截：事件 {eventType} 本月已达上限");
+                return false;
+            }
 
-            // 每 NPC 每事件每月限 1 次
             var key = (npcId, eventType);
             if (_npcEventFlags.TryGetValue(key, out bool triggered) && triggered)
             {
@@ -85,18 +137,19 @@ namespace MonthInteractionEvents
                 return false;
             }
 
-            // 每事件整月上限
-            int currentCount = _eventCounts.GetValueOrDefault(eventType, 0);
-            if (currentCount >= MaxPerEventPerMonth)
+            // 消耗：扣减剩余次数 + 记 NPC；归零则从队列移除
+            int newLeft = left - 1;
+            if (newLeft <= 0)
             {
-                ModSettings.LogDebug($"计数拦截：事件 {eventType} 本月已达 {MaxPerEventPerMonth} 次上限");
-                return false;
+                _remaining.Remove(eventType);
+                _queue?.Remove(eventType);
             }
-
-            // 消耗
+            else
+            {
+                _remaining[eventType] = newLeft;
+            }
             _npcEventFlags[key] = true;
-            _eventCounts[eventType] = currentCount + 1;
-            ModSettings.LogDebug($"计数消耗：NPC {npcId} 事件 {eventType}（本月第 {currentCount + 1} 次）");
+            ModSettings.LogDebug($"计数消耗：NPC {npcId} 事件 {eventType}（本月剩余 {newLeft}）");
             return true;
         }
     }
