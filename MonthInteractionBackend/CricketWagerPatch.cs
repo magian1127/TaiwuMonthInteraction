@@ -1,5 +1,8 @@
 using System.Collections.Generic;
+using System.Reflection;
+using GameData.Common;
 using GameData.Domains.Item;
+using GameData.Domains.Item.Display;
 using GameData.Utilities;
 using HarmonyLib;
 
@@ -29,9 +32,25 @@ namespace MonthInteractionBackend
         /// ItemKey.Invalid 表示不注入（用原版默认）。</summary>
         public static ItemKey PendingItemKey = ItemKey.Invalid;
 
+        // ——— 反射缓存：原版 ItemDomain 生成 CricketWagerData 各字段的实例方法/字段 ———
+        // 原版 SelectCricketWagers 对每个 wager 构造 CricketWagerData 时填了 4 个字段：
+        //   Wager / Crickets / MinWagerValue / PreRandomizedShowCricketIndex。
+        // 本 patch 追加新项时必须用完全相同的逻辑填满它们，否则前端 CricketCombatBlackBoard.RequestData
+        //   访问 reward.Crickets（null）会抛 ArgumentNullException（红字）。
+
+        private static readonly FieldInfo? FiEnemyId =
+            AccessTools.Field(typeof(ItemDomain), "_cricketBattleEnemyId");
+        private static readonly FieldInfo? FiEnemyCrickets =
+            AccessTools.Field(typeof(ItemDomain), "_cricketBattleEnemyCrickets");
+        private static readonly MethodInfo? MiGetNpcCricketDisplayData =
+            AccessTools.Method(typeof(ItemDomain), "GetNpcCricketDisplayDataListForCricketBattle");
+        private static readonly MethodInfo? MiCalcMinWagerValue =
+            AccessTools.Method(typeof(ItemDomain), "CalcMinWagerValue");
+
         [HarmonyPostfix]
         [HarmonyPatch(typeof(ItemDomain), "SelectCricketWagers")]
-        public static void SelectCricketWagersPostfix(ref List<CricketWagerData> __result)
+        public static void SelectCricketWagersPostfix(
+            ItemDomain __instance, DataContext context, ref List<CricketWagerData> __result)
         {
             if (!PendingItemKey.IsValid()) return;
             if (__result == null || __result.Count == 0) return;
@@ -49,18 +68,56 @@ namespace MonthInteractionBackend
                 }
             }
 
-            // 原版没生成物品类下注（NPC 无合适物品），追加一项
+            // 原版没生成物品类下注（NPC 无合适物品），追加一项。
+            // ★必须用原版同款逻辑填满 Crickets/MinWagerValue/PreRandomizedShowCricketIndex，
+            //   否则 Crickets 为 null 会导致前端促织战斗界面红字（CricketCombatBlackBoard.RequestData）。
             if (!replaced)
             {
-                __result.Add(new CricketWagerData
+                var data = BuildCompleteWagerData(__instance, context, PendingItemKey);
+                if (data != null)
                 {
-                    Wager = Wager.CreateItem(PendingItemKey, 1)
-                });
-                AdaptableLog.Info($"[{MonthInteraction.LogTag}] 后端促织：原版无物品下注，已追加 {PendingItemKey}");
+                    __result.Add(data);
+                    AdaptableLog.Info($"[{MonthInteraction.LogTag}] 后端促织：原版无物品下注，已追加 {PendingItemKey}（Crickets={data.Crickets?.Count ?? -1}）");
+                }
+                else
+                {
+                    // 反射失败兜底：不追加，放弃注入（避免红字）
+                    AdaptableLog.Info($"[{MonthInteraction.LogTag}] 后端促织：追加失败（反射取不到生成方法），跳过注入 {PendingItemKey}");
+                }
             }
 
             // 用完清空，避免污染后续促织决斗
             PendingItemKey = ItemKey.Invalid;
+        }
+
+        /// <summary>用原版 SelectCricketWagers 构造 CricketWagerData 的完全相同逻辑，
+        /// 生成一个字段完整的赌注项（Wager + Crickets + MinWagerValue + PreRandomizedShowCricketIndex）。
+        /// 反射失败返回 null（调用方应跳过追加）。</summary>
+        private static CricketWagerData? BuildCompleteWagerData(
+            ItemDomain instance, DataContext context, ItemKey itemKey)
+        {
+            if (FiEnemyId == null || FiEnemyCrickets == null
+                || MiGetNpcCricketDisplayData == null || MiCalcMinWagerValue == null)
+                return null;
+
+            int enemyId = (int)(FiEnemyId.GetValue(instance) ?? -1);
+            var enemyCrickets = (List<ItemKey>?)FiEnemyCrickets.GetValue(instance) ?? new List<ItemKey>();
+
+            Wager wager = Wager.CreateItem(itemKey, 1);
+
+            // 和原版 SelectCricketWagers 内部完全一致的三个调用
+            var crickets = (List<ItemDisplayData>)MiGetNpcCricketDisplayData.Invoke(
+                instance, new object[] { context, enemyId, enemyCrickets, wager.Grade })!;
+            long minWagerValue = (long)(MiCalcMinWagerValue.Invoke(instance, new object[] { wager }) ?? 0L);
+            byte preShowIndex = (byte)context.Random.Next(crickets.Count);
+
+            return new CricketWagerData
+            {
+                Wager = wager,
+                Crickets = crickets,
+                MinWagerValue = minWagerValue,
+                PreRandomizedShowCricketIndex = preShowIndex
+            };
         }
     }
 }

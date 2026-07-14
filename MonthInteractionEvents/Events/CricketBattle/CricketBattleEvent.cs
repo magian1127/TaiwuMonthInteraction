@@ -24,9 +24,6 @@ namespace MonthInteractionEvents
     /// </summary>
     public class CricketBattleEvent : MonthInteractionEventBase
     {
-        /// <summary>取品阶最高的前 N 档物品随机一个。</summary>
-        private const int TopGradeTiers = 3;
-
         // ArgBox 键（KeyTargetCharId 复用基类的同名常量）
         private const string KeySelectedItemKey = "MI_SelectedItemKey";
 
@@ -82,8 +79,14 @@ namespace MonthInteractionEvents
             return true;
         }
 
-        /// <summary>从 NPC 库存挑一件物品：取品阶最高的三档，随机一个。
-        /// 复用原版 CalcEnemyWagers 的筛选模式（过滤无价值、按品阶分组）。</summary>
+        /// <summary>从 NPC 库存挑一件物品：筛选标准与原版 <c>CalcEnemyWagers</c> 完全一致。
+        /// 这样选出的物品一定在原版下注列表里，后端 patch 走「替换」分支（Crickets 完整）而非「追加」分支。
+        ///
+        /// 三道关（和原版 CalcEnemyWagers 相同）：
+        ///   1. WagerItemMatchers 白名单（物品类型，排除促织等）
+        ///   2. CalcWagerGradeRange 品级区间 [min, max]（由 NPC 门派品阶 + 太吾威望决定）
+        ///   3. GetValue() >= 1（排除无价值物品）
+        /// 合格物品中取最高品级那一档随机一个（和原版 D 步骤一致）。</summary>
         private ItemKey PickItemFromNpc(int npcCharId)
         {
             try
@@ -94,26 +97,43 @@ namespace MonthInteractionEvents
                 var inventory = npc.GetInventory().Items;
                 if (inventory == null || inventory.Count == 0) return ItemKey.Invalid;
 
-                // 收集所有有价值物品的 (ItemKey, Grade)
+                // 品级区间（和原版 CalcEnemyWagers 完全一致）
+                sbyte charGrade = npc.GetOrganizationInfo().Grade;
+                sbyte taiwuFame = DomainManager.Taiwu.GetTaiwu().GetFame();
+                var (minGrade, maxGrade) = CricketSpecialConstants.CalcWagerGradeRange(charGrade, taiwuFame);
+
+                // 收集合格物品（三道关全过）
                 var candidates = new List<(ItemKey key, sbyte grade)>();
                 foreach (var kvp in inventory)
                 {
                     ItemKey key = kvp.Key;
+
+                    // 关1：物品类型白名单
+                    bool typeMatched = false;
+                    foreach (var matcher in CricketSpecialConstants.WagerItemMatchers)
+                    {
+                        if (matcher(key)) { typeMatched = true; break; }
+                    }
+                    if (!typeMatched) continue;
+
+                    // 关2：品级区间
+                    sbyte grade = ItemTemplateHelper.GetGrade(key.ItemType, key.TemplateId);
+                    if (grade < minGrade || grade > maxGrade) continue;
+
+                    // 关3：价值门槛
                     var baseItem = DomainManager.Item.GetBaseItem(key);
                     if (baseItem == null || baseItem.GetValue() < 1) continue;
-                    sbyte grade = ItemTemplateHelper.GetGrade(key.ItemType, key.TemplateId);
+
                     candidates.Add((key, grade));
                 }
                 if (candidates.Count == 0) return ItemKey.Invalid;
 
-                // 取品阶最高的三档（distinct 品阶值降序取前3）
-                var topGrades = candidates.Select(c => (int)c.grade)
-                    .Distinct().OrderByDescending(g => g).Take(TopGradeTiers).ToHashSet();
-                var pool = candidates.Where(c => topGrades.Contains(c.grade)).ToList();
-                if (pool.Count == 0) return ItemKey.Invalid;
+                // 取最高品级那一档，随机一个（和原版 D 步骤一致）
+                sbyte highestGrade = candidates.Max(c => c.grade);
+                var pool = candidates.Where(c => c.grade == highestGrade).ToList();
 
                 var picked = pool[Rng.Next(pool.Count)].key;
-                ModSettings.LogDebug($"CricketBattle 从 NPC {npcCharId} 库存选物品：{picked}（品阶池：{string.Join(",", topGrades.OrderBy(g => g))}，候选 {pool.Count} 件）");
+                ModSettings.LogDebug($"CricketBattle 从 NPC {npcCharId} 库存选物品：{picked}（品级区间 [{minGrade},{maxGrade}]，最高品级 {highestGrade}，候选 {pool.Count} 件）");
                 return picked;
             }
             catch (Exception ex)
