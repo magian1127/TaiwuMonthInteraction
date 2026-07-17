@@ -21,6 +21,13 @@ namespace MonthInteractionEvents
     ///     （鼠标悬停可看物品详情；物品由 NPC 库存品阶最高三档随机一个）
     ///   - 接受后，下注列表里出现该物品（复用原版 SelectCricketWagers 生成，替换其中物品项）
     ///   - 发 ModDisplayEvent 通知 IncreaseDifficulty 屏蔽物品遮蔽（结算后由 CricketBettingResultPatch 恢复）
+    ///
+    /// ★ PendingItemKey 清空双保险（防跨决斗残留 bug）：
+    ///   <see cref="CricketWagerPatch.PendingItemKey"/> 是 static 字段，原本只在 SelectCricketWagers 的
+    ///   Postfix 末尾清空。但「对同一 NPC 短时间内二次决斗」时原版复用缓存 BetRewards、跳过
+    ///   SelectCricketWagers，Postfix 不触发，PendingItemKey 残留 → 下次任意决斗第一个物品被错误替换。
+    ///   修复：<see cref="ExecuteInteraction"/> 的 StartCricketCombat 调用包在 try/finally 里，
+    ///   finally 兜底清空 PendingItemKey（<see cref="ClearPendingItemKey"/>）。正常路径幂等，异常路径兜底。
     /// </summary>
     public class CricketBattleEvent : MonthInteractionEventBase
     {
@@ -187,9 +194,15 @@ namespace MonthInteractionEvents
             }
 
             // 触发促织决斗（不带 specialWagerData，走原版 StartCricketCombat，由后端 Postfix 接管物品替换）
+            // ★ try/finally 兜底清空 PendingItemKey：
+            //   正常路径下 SelectCricketWagers 在 Invoke 内同步执行，Postfix 已清空 PendingItemKey；
+            //   但对同一 NPC 短时间内二次决斗时，原版会复用缓存 BetRewards、跳过 SelectCricketWagers，
+            //   导致 Postfix 不触发、PendingItemKey 残留，下次任意决斗会被错误注入。
+            //   finally 保证无论 Invoke 走哪条路径（含抛异常），PendingItemKey 必归零。幂等无害。
             if (StartCricketCombatMethod == null)
             {
                 AdaptableLog.Info("[MonthInteraction] CricketBattle 反射失败：StartCricketCombat 未找到");
+                ClearPendingItemKey();
                 return;
             }
             try
@@ -201,6 +214,20 @@ namespace MonthInteractionEvents
             {
                 AdaptableLog.Info($"[MonthInteraction] CricketBattle 触发异常: {ex.Message}");
             }
+            finally
+            {
+                ClearPendingItemKey();
+            }
+        }
+
+        /// <summary>兜底清空后端 <c>CricketWagerPatch.PendingItemKey</c>。
+        /// 正常路径 Postfix 已清空（此处幂等）；异常路径（原版未调 SelectCricketWagers）此处兜底，杜绝跨决斗残留。</summary>
+        private static void ClearPendingItemKey()
+        {
+            var pendingField = GetPendingItemKeyField();
+            if (pendingField == null) return;
+            pendingField.SetValue(null, ItemKey.Invalid);
+            ModSettings.LogDebug("CricketBattle 兜底清空 PendingItemKey");
         }
     }
 }
