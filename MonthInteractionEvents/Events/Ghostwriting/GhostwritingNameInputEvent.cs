@@ -70,6 +70,9 @@ namespace MonthInteractionEvents
                         //   直接 StartShowSkillAnim，不弹 UI_ProfessionSkillConfirm 框。
                         //   配合后端 ProfessionSkillPatch 包裹 OnSkillExecuted，免扣时间/历练/资源。
                         ArgBox.Set("SkipConfirm", true);
+                        // ★ MainInteractionHeadEvent：原版结果窗（成功/失败）退出时读此键决定跳回目标
+                        //   （?? fb38f657 原版人物互动主菜单）。注入 MOD 首页 GUID，让结果窗结束回 MOD 首页。
+                        ArgBox.Set("MainInteractionHeadEvent", GhostwritingEventGuid);
                         ModSettings.LogDebug("NameInput 确认：接入原版事件链（跳过确认框+免消耗）" + OriginalResultEventGuid);
                         EventHelper.ConfirmSkillExecute(OriginalResultEventGuid, ArgBox);
                         return "";
