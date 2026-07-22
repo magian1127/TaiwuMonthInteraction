@@ -20,6 +20,10 @@ namespace MonthInteractionEvents
         // ArgBox 键
         private const string KeyDialogCharId = "MI_DialogCharId";   // 对话者（父母之一）
 
+        /// <summary>ArgBox 键：改名对象（孩子）的 charId。由 ExecuteInteraction 注入子事件，
+        /// 子事件 Cancel 回退时原样带回，TryRestoreTargetOnCallback 据此恢复 KeyTargetCharId。</summary>
+        private const string KeyChildCharId = "MI_ChildCharId";
+
         /// <summary>ArgBox 键：取消回退标记。NameInputEvent 的 Cancel 选项设此键，
         /// GhostwritingEvent 的 CheckConditionInner 见此标记直接放行，绕过幂等券。</summary>
         private const string KeyFromNameInput = "MI_FromNameInput";
@@ -72,6 +76,22 @@ namespace MonthInteractionEvents
             ModSettings.LogDebug($"Ghostwriting 选定孩子 {targetId}，对话者(父母) {dialogCharId}");
         }
 
+        /// <summary>取消回退放行时：从子事件带回的 MI_ChildCharId 恢复首次触发时选定的孩子 id。
+        /// 游戏在 Option 返回 GUID 时把子事件的 ArgBox 原样赋给本事件（不克隆），
+        /// 但它缺少首次触发流程塞的 MI_TargetCharId（被回退短路跳过），不恢复会导致再次接受时
+        /// ExecuteInteraction 拿到默认 0 → 改名对象错乱。</summary>
+        protected override bool TryRestoreTargetOnCallback(ref int targetId)
+        {
+            int childId = -1;
+            if (ArgBox.Get(KeyChildCharId, ref childId) && childId >= 0)
+            {
+                targetId = childId;
+                return true;
+            }
+            ModSettings.LogDebug("Ghostwriting 回退放行但 MI_ChildCharId 缺失，无法恢复目标");
+            return false;
+        }
+
         /// <summary>判断孩子是否为太吾的亲骨肉（血父或血母是太吾）。</summary>
         private static bool IsTaiwuBloodChild(int childCharId, int taiwuCharId)
         {
@@ -99,7 +119,7 @@ namespace MonthInteractionEvents
             //   argBox 注入：孩子 charId（改名对象 + 输入页右侧显示）、父母 charId（取消回退用）、技能ID
             int skillId = GetLiteratiSkillId();
             var inputArgBox = new EventArgBox();
-            inputArgBox.Set("MI_ChildCharId", targetId);        // 改名对象（孩子）
+            inputArgBox.Set(KeyChildCharId, targetId);           // 改名对象（孩子）
             inputArgBox.Set("CharacterId", targetId);            // ★ 输入页右侧显示孩子
             inputArgBox.Set(KeyDialogCharId, dialogCharId);      // 父母（取消回退首页时显示）
             inputArgBox.Set("ProfessionSkillTemplateId", skillId); // 才俊技能 ID（确认时播动画+判定用）

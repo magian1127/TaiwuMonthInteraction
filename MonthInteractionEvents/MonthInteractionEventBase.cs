@@ -221,9 +221,19 @@ namespace MonthInteractionEvents
             //    游戏的 ExecuteEventOptionInternal 会调 CheckCondition 验证，但此时走幂等券会返回 false
             //    导致事件关闭而非回退。用 ArgBox 标记识别这种场景，直接放行。
             //    首次触发时 ArgBox 是新的，没有此标记；回退时 ArgBox 从子事件传来，有标记。
+            //
+            //    ★ 踩坑：游戏在 Option 返回 GUID 时把子事件的 ArgBox 【原样】（同引用）赋给本事件，
+            //    不克隆。这个 ArgBox 缺少本事件首次触发流程步骤 8 里塞的 KeyTargetCharId
+            //    （短路跳过了那段）。若不在此恢复，再次接受时 ExecuteInteraction 拿到的 targetId
+            //    是默认 0 → 改名/互动对象错乱。交子类从子事件带回的键恢复。
             string returnMark = CallbackReturnMark;
             if (!string.IsNullOrEmpty(returnMark) && ArgBox.GetBool(returnMark))
+            {
+                int restoredTarget = -1;
+                if (TryRestoreTargetOnCallback(ref restoredTarget) && restoredTarget >= 0)
+                    ArgBox.Set(KeyTargetCharId, restoredTarget);
                 return true;
+            }
 
             // 1. 拿太吾对象和位置
             var taiwu = DomainManager.Taiwu.GetTaiwu();
@@ -330,6 +340,12 @@ namespace MonthInteractionEvents
         /// <summary>目标 NPC 选定后的钩子，子类可覆写往 ArgBox 塞额外数据。
         /// 默认空实现。targetId 是 KeyTargetCharId 对应的 NPC。</summary>
         protected virtual void OnTargetSelected(int targetId) { }
+
+        /// <summary>取消回退放行时的钩子：子类从子事件 Cancel 带回的 ArgBox 键恢复首次触发时
+        /// 选定的目标 id。基类在 CallbackReturnMark 短路放行前调用，返回 true 且 targetId>=0
+        /// 时写回 KeyTargetCharId，避免再次接受时 ExecuteInteraction 拿到默认 0。
+        /// 默认 false（不恢复）。仅支持取消回退的子类（如 Ghostwriting）需要覆写。</summary>
+        protected virtual bool TryRestoreTargetOnCallback(ref int targetId) => false;
 
         /// <summary>玩家拒绝时调用的钩子，默认空实现。子类可覆写做清理（如恢复其他 MOD 的状态）。</summary>
         protected virtual void OnDecline() { }
