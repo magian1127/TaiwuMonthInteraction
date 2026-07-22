@@ -3,3 +3,9 @@
 		-- EventContent : 一位面带病容的行人，闻得先生乃杏林圣手，恳请为在下看诊施药。
 		-- Option_Accept : 为他诊治
 		-- Option_Decline : 爱莫能助
+
+- EventGuid : a1b2c3d4-3334-4aaa-9001-000000000013
+	- EventName : 施药
+		-- EventContent : 请从行囊中拣选一味良药，为这位施主化解病痛。
+		-- Option_Confirm : 施用此药
+		-- Option_Cancel : 作罢

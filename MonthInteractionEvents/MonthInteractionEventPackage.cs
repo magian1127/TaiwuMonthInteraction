@@ -27,7 +27,8 @@ namespace MonthInteractionEvents
                 new CricketBattleEvent(),
                 new GhostwritingEvent(),
                 new GhostwritingNameInputEvent(),
-                new MedicineEvent()
+                new MedicineEvent(),
+                new MedicineSelectEvent()
             };
             foreach (var eventItem in EventList)
             {
@@ -35,7 +36,7 @@ namespace MonthInteractionEvents
             }
             // ★ 收集参与轮转的 head 事件 Guid（IsHeadEvent=true 的）
             // 基类的轮转队列在月初会按此列表打乱，决定每次移动哪个事件优先触发。
-            // GhostwritingNameInputEvent 是子事件（IsHeadEvent=false），不参与轮转。
+            // GhostwritingNameInputEvent / MedicineSelectEvent 是子事件（IsHeadEvent=false），不参与轮转。
             MonthInteractionEventBase.AllEventGuids.Clear();
             MonthInteractionEventBase.AllEventTags.Clear();
             foreach (var eventItem in EventList)
